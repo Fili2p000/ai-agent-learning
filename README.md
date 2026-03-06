@@ -52,7 +52,7 @@ uv run main.py
 
 ### 2. AgentScope RAG Demo
 
-基于 [AgentScope](https://github.com/modelscope/agentscope) 框架，结合 DashScope（Qwen-Plus）和 ChromaDB，实现了一个高速公路行业知识库问答系统：
+基于 [AgentScope](https://github.com/modelscope/agentscope) 框架，结合 DashScope（Qwen-Plus）和 ChromaDB，实现了一个支持自定义文档上传的单 Agent RAG 基础系统：
 
 - 使用 DashScope Embedding 对文档进行向量化，存入 ChromaDB
 - 用户提问后，检索 Top-3 相似文本片段注入 Prompt，由 Qwen-Plus 生成回答
