@@ -1,0 +1,7 @@
+# 高速公路知识库问答 Demo - 依赖包
+# 安装命令: pip install -r requirements.txt
+
+agentscope>=0.0.6
+dashscope>=1.20.0
+chromadb>=0.5.0
+streamlit>=1.35.0
