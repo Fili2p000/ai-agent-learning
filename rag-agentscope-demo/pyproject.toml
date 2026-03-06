@@ -8,5 +8,6 @@ dependencies = [
     "agentscope>=0.0.6",
     "chromadb>=0.5.0",
     "dashscope>=1.20.0",
+    "ddgs>=9.11.2",
     "streamlit>=1.35.0",
 ]

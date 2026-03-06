@@ -16,7 +16,12 @@ import os
 import tempfile
 import streamlit as st
 import dashscope
+import asyncio
 from dashscope import Generation
+from agentscope.message import Msg
+from agentscope.agent import AgentBase
+from agentscope.model import DashScopeChatModel
+from agentscope.message import Msg
 # ── 内部模块 ──────────────────────────────────
 from rag_utils import build_knowledge_base, query_knowledge, get_kb_status
 
@@ -41,35 +46,120 @@ SYSTEM_PROMPT = """你是一个专业的高速公路行业专家助手。
 5. 如果用户的问题超出高速公路领域，礼貌地说明你只负责高速公路相关问答。"""
 
 
+
+
+# ──────────────────────────────────────────────
+# 定义Agent
+# ──────────────────────────────────────────────
+
+class AnswerAgent(AgentBase):
+    def __init__(self, api_key: str):
+        super().__init__()
+        self.model = DashScopeChatModel(
+            model_name="qwen-plus",
+            api_key=api_key,
+            stream=False,
+        )
+
+    async def reply(self, msg: Msg) -> Msg:
+        response = await self.model(
+            messages=[
+                {"role": "system", "content": """你是一个专业的高速公路行业专家助手。
+
+【重要规则】
+1. 请根据提供的【知识库内容】和【网络搜索内容】回答问题。
+2. 回答时必须注明每条信息的来源：
+   - 知识库内容标注：📚 来自知识库
+   - 网络搜索内容标注：🌐 来自网络搜索
+3. 如果两个来源都没有相关信息，说明"未找到相关信息"，不要编造。
+4. 使用清晰、专业的中文回答。"""},
+                {"role": "user", "content": msg.content},
+            ]
+        )
+        return Msg(name="高速公路专家", content=response['content'][0]['text'], role="assistant")
+
+class JudgeAgent(AgentBase):
+    def __init__(self, api_key: str):
+        super().__init__()
+        self.model = DashScopeChatModel(
+            model_name="qwen-plus",
+            api_key=api_key,
+            stream=False,
+        )
+
+    async def reply(self, msg: Msg) -> Msg:
+        response = await self.model(
+            messages=[
+                {"role": "system", "content": """你是一个信息充分性判断专家。
+你会收到一个用户问题和从知识库检索到的内容。
+请判断知识库内容是否足够回答用户问题。
+
+请只返回以下 JSON 格式，不要有任何其他内容：
+{"sufficient": true} 
+或
+{"sufficient": false, "search_query": "建议的搜索关键词"}"""},
+                {"role": "user", "content": msg.content},
+            ]
+        )
+        return Msg(name="判断专家", content=response['content'][0]['text'], role="assistant")
+
+
+
 # ──────────────────────────────────────────────
 # AgentScope 初始化（只执行一次）
 # ──────────────────────────────────────────────
 @st.cache_resource
 def init_agentscope():
-    dashscope.api_key = DASHSCOPE_API_KEY
-    return "ready"  # 占位，保持调用接口不变
+    return {
+        "judge": JudgeAgent(api_key=DASHSCOPE_API_KEY),
+        "answer": AnswerAgent(api_key=DASHSCOPE_API_KEY),
+    }
 
 
 # ──────────────────────────────────────────────
 # 核心问答函数：RAG 检索 + Agent 生成
 # ──────────────────────────────────────────────
-def ask_agent(agent, question: str) -> str:
-    context = query_knowledge(question)
-    augmented_content = f"""【参考上下文】
-{context}
+def ask_agent(agents: dict, question: str) -> str:
+    import json
+    from ddgs import DDGS
 
-【用户问题】
-{question}"""
+    # Step 1: RAG 检索
+    rag_context = query_knowledge(question)
 
-    response = Generation.call(
-        model="qwen-plus",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": augmented_content},
-        ],
-        result_format="message",
-    )
-    return response.output.choices[0].message.content
+    # Step 2: 判断 Agent 决定是否需要联网
+    judge_msg = Msg(name="用户", role="user", content=f"""
+用户问题：{question}
+
+知识库内容：
+{rag_context}
+""")
+    judge_response = asyncio.run(agents["judge"].reply(judge_msg))
+
+    # Step 3: 解析判断结果
+    search_context = ""
+    try:
+        judge_result = json.loads(judge_response.content)
+        if not judge_result.get("sufficient", True):
+            search_query = judge_result.get("search_query", question)
+            results = DDGS().text(search_query, max_results=3)
+            if results:
+                search_parts = [f"- {r['title']}: {r['body'][:200]}" for r in results]
+                search_context = "\n".join(search_parts)
+    except json.JSONDecodeError:
+        pass  # 解析失败就跳过联网搜索
+
+    # Step 4: 整合回答 Agent
+    answer_msg = Msg(name="用户", role="user", content=f"""
+用户问题：{question}
+
+📚 知识库内容：
+{rag_context}
+
+🌐 网络搜索内容：
+{search_context if search_context else "（本次未进行联网搜索）"}
+""")
+    answer_response = asyncio.run(agents["answer"].reply(answer_msg))
+    return answer_response.content
 
 # ══════════════════════════════════════════════
 # Streamlit 页面
@@ -194,7 +284,7 @@ def main():
 
         # 初始化 Agent（缓存，只初始化一次）
         try:
-            agent = init_agentscope()
+            agents = init_agentscope()
         except Exception as e:
             st.error(f"AgentScope 初始化失败: {e}")
             st.stop()
@@ -203,7 +293,7 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("正在检索知识库并生成回答..."):
                 try:
-                    answer = ask_agent(agent, prompt)
+                    answer = ask_agent(agents, prompt)
                     st.markdown(answer)
                     st.session_state.messages.append({
                         "role": "assistant",

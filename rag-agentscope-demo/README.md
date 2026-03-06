@@ -1,12 +1,12 @@
 # 🛣️ 高速公路行业知识库问答 Demo
 
-基于 **AgentScope + DashScope (Qwen-Plus) + ChromaDB + Streamlit** 构建的本地 RAG 问答系统。
+基于 **AgentScope + DashScope (Qwen-Plus) + ChromaDB + Streamlit** 构建的多 Agent RAG 问答系统。
 
 ## 📁 文件结构
 
 ```
 highway_rag_demo/
-├── app.py              # 主程序（Streamlit 界面 + AgentScope Agent）
+├── app.py              # 主程序（Streamlit 界面 + AgentScope 多 Agent）
 ├── rag_utils.py        # RAG 工具模块（切片、向量化、ChromaDB）
 ├── requirements.txt    # 依赖包
 ├── highway_rules.txt   # 示例知识文件（可替换为你自己的）
@@ -17,18 +17,18 @@ highway_rag_demo/
 
 ### 第 1 步：安装依赖
 ```bash
-pip install -r requirements.txt
+uv add -r requirements.txt
 ```
 
 ### 第 2 步：填写 API Key
-打开 `app.py`，找到第 28 行，将 API Key 替换为你的真实 Key：
-```python
-DASHSCOPE_API_KEY = "sk-your-actual-key-here"
-```
-
-**或者**使用环境变量（更安全）：
+使用环境变量（推荐）：
 ```bash
 export DASHSCOPE_API_KEY="sk-your-actual-key-here"
+```
+
+**或者**打开 `app.py`，直接修改第 28 行：
+```python
+DASHSCOPE_API_KEY = "sk-your-actual-key-here"
 ```
 
 > 💡 DashScope API Key 申请地址：https://dashscope.console.aliyun.com/
@@ -44,9 +44,10 @@ streamlit run app.py
 1. 在**左侧侧边栏**点击「Browse files」上传 `highway_rules.txt`
 2. 点击「🔨 构建知识库」按钮，等待处理完成（约 10-30 秒）
 3. 在**右侧聊天框**输入问题，例如：
-   - 高速公路最高限速是多少？
-   - ETC 车道行驶速度限制？
-   - 隧道内发生火灾如何逃生？
+   - 高速公路最高限速是多少？（知识库回答）
+   - ETC 车道行驶速度限制？（知识库回答）
+   - 隧道内发生火灾如何逃生？（知识库回答）
+   - 最新的高速公路建设新闻？（触发联网搜索）
 
 ## 🏗️ 架构说明
 
@@ -57,11 +58,13 @@ streamlit run app.py
    ↓
 [ChromaDB] 余弦相似度检索 Top-3 片段
    ↓
-[Prompt 注入] 上下文 + 问题 → 构造 Augmented Prompt
+[JudgeAgent] 判断知识库内容是否足够回答问题
+   ↓ 不够                    ↓ 足够
+[DDGS] 联网搜索补充资料       跳过联网搜索
    ↓
-[AgentScope DialogAgent] 调用 Qwen-Plus 生成回答
+[AnswerAgent] 整合知识库 + 网络资料，标注来源回答
    ↓
-[Streamlit] 显示回答
+[Streamlit] 显示带 📚 / 🌐 来源标注的回答
 ```
 
 ## ⚙️ 关键参数调整
@@ -78,7 +81,7 @@ streamlit run app.py
 
 **Q: 出现 `chromadb` 相关错误？**
 ```bash
-pip install chromadb --upgrade
+uv add chromadb
 ```
 
 **Q: DashScope 调用失败？**
@@ -93,3 +96,7 @@ pip install chromadb --upgrade
 **Q: ChromaDB 数据存在哪里？**
 - 持久化在当前目录的 `./chroma_db/` 文件夹
 - 删除该文件夹可清空知识库
+
+**Q: 联网搜索质量不好？**
+- 当前使用 DDGS，对中文搜索质量一般
+- 可替换为 SerpAPI 或 Bing Search API 提升效果
